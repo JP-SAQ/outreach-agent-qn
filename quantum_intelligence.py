@@ -1,23 +1,43 @@
-# Enhanced LangGraph Agent for Quantum Newsletter
-from typing import TypedDict, List, Optional, Dict, Any
+# quantum_newsletter_agent.py
+
+"""
+Quantum Newsletter Agent
+
+Enhanced LangGraph agent that generates a quantum technology newsletter. It:
+- Searches for relevant articles using Tavily
+- Cleans and deduplicates article snippets
+- Tracks investment updates for target companies
+- Generates an executive summary with LLM support
+- Composes and emails a markdown+HTML newsletter
+- Logs processing stats and updates persistence files
+"""
+
 import datetime
-import smtplib
-import os
-import requests
 import json
 import logging
-from pathlib import Path
+import os
+import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from dotenv import load_dotenv
+from pathlib import Path
 from urllib.parse import urlparse
-from thefuzz import fuzz # --- NEW --- For smart deduplication
+from typing import TypedDict, List, Optional, Dict, Any
+
+import requests
+from dotenv import load_dotenv
+from thefuzz import fuzz  # For smart deduplication
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, BaseMessage
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.tools.tavily_search import TavilySearchResults
+
+
+
+# =============================================================================
+# Configuration and Logging
+# =============================================================================
 
 # Load environment variables
 load_dotenv()
@@ -33,8 +53,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- Enhanced State Definition ---
+
+# =============================================================================
+# State and Config Definitions
+# =============================================================================
+
 class AgentState(TypedDict):
+    """Represents the structured state used and modified across the LangGraph agent nodes
+    during newsletter generation.
+
+    Attributes
+    ----------
+    messages : List[BaseMessage]
+        List of LangChain messages used in LLM interactions (e.g., prompts and responses).
+    new_articles : List[Dict[str, Any]]
+        Raw, validated articles retrieved from the web, before deduplication.
+    deduped_articles : List[Dict[str, Any]]
+        Final set of unique articles after URL and fuzzy title deduplication.
+    investment_updates : Dict[str, str]
+        Company-specific update summaries (e.g., funding, partnerships).
+    executive_summary : str
+        LLM-generated summary of trends in the quantum news space.
+    errors : List[str]
+        List of error messages encountered during processing for logging/debugging.
+    processing_stats : Dict[str, int]
+        Dictionary of counters and metrics collected during execution
+        (e.g., number of articles found, duplicates removed).
+    """
     messages: List[BaseMessage]
     new_articles: List[Dict[str, Any]]
     deduped_articles: List[Dict[str, Any]]
@@ -43,9 +88,33 @@ class AgentState(TypedDict):
     errors: List[str]
     processing_stats: Dict[str, int]
 
-# --- Configuration Class ---
+
 class NewsletterConfig:
+    """Configuration parameters for newsletter generation loaded from environment variables.
+
+    Attributes
+    ----------
+    max_articles : int
+        Maximum number of final articles to include in the newsletter.
+    search_timeout : int
+        Timeout in seconds for article search queries.
+    link_validation_timeout : int
+        Timeout in seconds for validating URLs via HEAD requests.
+    previous_articles_file : str
+        File path storing URLs of previously sent articles to avoid duplicates.
+    output_file : str
+        File path to save the generated newsletter markdown.
+    companies_to_track : List[str]
+        Names of companies to track for investment updates.
+    bad_url_keywords : List[str]
+        Substrings indicating URLs to exclude (e.g., tag or category pages).
+    title_similarity_threshold : int
+        Threshold (0-100) for fuzzy title similarity deduplication.
+    """
     def __init__(self):
+        """
+        Initialize NewsletterConfig from environment variables.
+        """
         self.max_articles = int(os.getenv("MAX_ARTICLES", "10"))
         self.search_timeout = int(os.getenv("SEARCH_TIMEOUT", "5"))
         self.link_validation_timeout = int(os.getenv("LINK_VALIDATION_TIMEOUT", "5"))
@@ -53,11 +122,16 @@ class NewsletterConfig:
         self.output_file = os.getenv("OUTPUT_FILE", "quantum_newsletter_output.md")
         self.companies_to_track = os.getenv("COMPANIES_TO_TRACK", "EvolutionQ,Qunnect").split(",")
         self.bad_url_keywords = ['/tag/', '/tags/', '/category/', '/topics/', '/solutions/', '/search/', '/page/']
-        self.title_similarity_threshold = 85 # --- NEW --- Similarity score for deduplication
+        self.title_similarity_threshold = 85
+
 
 config = NewsletterConfig()
 
-# --- Model and Tool Initialization ---
+
+# =============================================================================
+# Model and Tool Initialization
+# =============================================================================
+
 try:
     llm = ChatGoogleGenerativeAI(
         model="gemini-1.5-flash-latest",
@@ -70,11 +144,26 @@ except Exception as e:
     logger.error(f"Failed to initialize tools: {e}")
     raise
 
-# ------------------------------
-# Enhanced Utility Functions
-# ------------------------------
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
 def validate_url(url: str, timeout: int = 5) -> bool:
-    """Validate if a URL is accessible and returns a successful status code."""
+    """Check if a URL is reachable by sending a HEAD request.
+
+    Parameters
+    ----------
+    url : str
+        URL to validate.
+    timeout : int, optional
+        Timeout in seconds for the HEAD request (default is 5).
+
+    Returns
+    -------
+    bool
+        True if the URL responds with a 2xx status code, False otherwise.
+    """
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
@@ -84,14 +173,37 @@ def validate_url(url: str, timeout: int = 5) -> bool:
     except requests.exceptions.RequestException:
         return False
 
+
 def is_article_url(url: str) -> bool:
-    """Check if URL appears to be an article rather than a category/tag page."""
+    """Determine if a URL likely points to an article by excluding known bad keywords.
+
+    Parameters
+    ----------
+    url : str
+        URL string to check.
+
+    Returns
+    -------
+    bool
+        True if URL does not contain any bad_url_keywords, False otherwise.
+    """
     url_lower = url.lower()
     return not any(keyword in url_lower for keyword in config.bad_url_keywords)
 
-# --- NEW --- Snippet Cleaning Function
+
 def clean_snippet(raw_snippet: str) -> str:
-    """Uses an LLM to clean raw text snippets."""
+    """Clean a raw text snippet by removing boilerplate using an LLM.
+
+    Parameters
+    ----------
+    raw_snippet : str
+        Raw snippet text to clean.
+
+    Returns
+    -------
+    str
+        Cleaned snippet text. Returns empty string if input is empty.
+    """
     if not raw_snippet:
         return ""
     
@@ -112,10 +224,24 @@ def clean_snippet(raw_snippet: str) -> str:
         return cleaned
     except Exception as e:
         logger.error(f"Failed to clean snippet: {e}")
-        return raw_snippet # Return original snippet on failure
+        return raw_snippet
+
 
 def send_newsletter_email(subject: str, html_content: str) -> bool:
-    """Enhanced email sending with better error handling and HTML formatting."""
+    """Send the newsletter via email with HTML formatting.
+
+    Parameters
+    ----------
+    subject : str
+        Email subject line.
+    html_content : str
+        The markdown content to convert and send as email body.
+
+    Returns
+    -------
+    bool
+        True if email sent successfully, False otherwise.
+    """
     sender = os.getenv("EMAIL_USER")
     recipient = os.getenv("EMAIL_RECIPIENT")
     password = os.getenv("EMAIL_PASS")
@@ -144,8 +270,20 @@ def send_newsletter_email(subject: str, html_content: str) -> bool:
         logger.error(f"Failed to send email: {e}")
         return False
 
+
 def convert_markdown_to_html(md_content: str) -> str:
-    """Convert basic markdown to HTML for better email formatting."""
+    """Convert basic markdown to HTML for email formatting.
+
+    Parameters
+    ----------
+    md_content : str
+        Markdown content string.
+
+    Returns
+    -------
+    str
+        HTML-formatted string with basic tag replacements.
+    """
     html = md_content
     html = html.replace("## ", "<h2>").replace("\n", "</h2>\n", 1) if "## " in html else html
     import re
@@ -159,8 +297,15 @@ def convert_markdown_to_html(md_content: str) -> str:
     </html>
     """
 
+
 def get_previous_articles() -> List[str]:
-    """Load previously sent article URLs."""
+    """Load URLs of previously sent articles from persistence file.
+
+    Returns
+    -------
+    List[str]
+        List of URLs.
+    """
     try:
         with open(config.previous_articles_file, "r") as f:
             return [line.strip() for line in f.readlines() if line.strip()]
@@ -168,8 +313,19 @@ def get_previous_articles() -> List[str]:
         logger.info("No previous articles file found. Starting fresh.")
         return []
 
-def save_processing_stats(stats: Dict[str, int]):
-    """Save processing statistics to a JSON file."""
+
+def save_processing_stats(stats: Dict[str, int]) -> None:
+    """Persist processing statistics to a JSON file.
+
+    Parameters
+    ----------
+    stats : Dict[str, int]
+        Dictionary of processing counters and metrics.
+
+    Returns
+    -------
+    None
+    """
     stats_file = "newsletter_stats.json"
     try:
         with open(stats_file, "w") as f:
@@ -180,12 +336,21 @@ def save_processing_stats(stats: Dict[str, int]):
     except Exception as e:
         logger.error(f"Failed to save stats: {e}")
 
-# ------------------------------
-# Enhanced Tools
-# ------------------------------
+
 @tool
 def get_dynamic_company_update(company: str) -> str:
-    """Get recent news about a specific quantum computing company."""
+    """Fetch recent business developments for a quantum company using Tavily.
+
+    Parameters
+    ----------
+    company : str
+        Name of the company to query.
+
+    Returns
+    -------
+    str
+        Concise summary of recent developments or an error message.
+    """
     logger.info(f"Fetching update for: {company}")
     current_date = datetime.date.today()
     current_year = current_date.year
@@ -211,12 +376,20 @@ def get_dynamic_company_update(company: str) -> str:
         logger.error(f"Failed to get update for {company}: {e}")
         return f"Unable to retrieve recent updates for {company}."
 
-# ------------------------------
-# Enhanced Graph Node Functions
-# ------------------------------
-# --- MODIFIED --- to include snippet cleaning
+
 def retrieve_articles(state: AgentState) -> AgentState:
-    """Enhanced article retrieval with better filtering, validation, and snippet cleaning."""
+    """Retrieve, filter, validate, and clean article snippets.
+
+    Parameters
+    ----------
+    state : AgentState
+        Current agent state with prior data.
+
+    Returns
+    -------
+    AgentState
+        Updated state including new_articles and processing_stats.
+    """
     logger.info("Starting article retrieval and validation...")
     current_date = datetime.date.today()
     current_year = current_date.year
@@ -246,7 +419,7 @@ def retrieve_articles(state: AgentState) -> AgentState:
             unique_results.append(result)
     
     article_candidates = [
-        result for result in unique_results 
+        result for result in unique_results  
         if is_article_url(result.get('url', ''))
     ]
     logger.info(f"Found {len(article_candidates)} article candidates after URL filtering")
@@ -255,10 +428,8 @@ def retrieve_articles(state: AgentState) -> AgentState:
     for result in article_candidates:
         url = result.get('url')
         if url and validate_url(url, config.link_validation_timeout):
-            # Clean the snippet before adding
             raw_snippet = result.get('content', '')
             cleaned_snippet = clean_snippet(raw_snippet)
-            
             live_articles.append({
                 'title': result.get('title', 'Untitled'),
                 'url': url,
@@ -267,24 +438,32 @@ def retrieve_articles(state: AgentState) -> AgentState:
         else:
             logger.debug(f"Discarding invalid/dead link: {url}")
     
-    state["new_articles"] = live_articles[:config.max_articles * 2] # Fetch more to allow for better deduplication
+    state["new_articles"] = live_articles[:config.max_articles * 2]
     state.setdefault("processing_stats", {})["articles_found"] = len(live_articles)
     logger.info(f"Retrieved {len(state['new_articles'])} validated and cleaned articles")
     return state
 
-# --- MODIFIED --- to include title similarity check
+
 def deduplicate_articles(state: AgentState) -> AgentState:
-    """Remove articles that were already sent or have highly similar titles."""
+    """Remove previously sent and fuzzy-title duplicate articles.
+
+    Parameters
+    ----------
+    state : AgentState
+        State containing new_articles and processing stats.
+
+    Returns
+    -------
+    AgentState
+        Updated state with deduped_articles and updated stats.
+    """
     logger.info("Deduplicating articles with URL and title similarity checks...")
-    
-    # First pass: Deduplicate based on previously sent URLs
     previous_urls = set(get_previous_articles())
     url_deduped_articles = [
-        article for article in state["new_articles"] 
+        article for article in state["new_articles"]  
         if article["url"] not in previous_urls
     ]
     
-    # Second pass: Deduplicate based on title similarity
     final_articles = []
     seen_titles = []
     for article in url_deduped_articles:
@@ -293,237 +472,4 @@ def deduplicate_articles(state: AgentState) -> AgentState:
             similarity = fuzz.ratio(article['title'].lower(), seen_title.lower())
             if similarity > config.title_similarity_threshold:
                 is_duplicate = True
-                logger.info(f"Found title duplicate (similarity: {similarity}%). Discarding '{article['title']}' as it is too similar to '{seen_title}'.")
-                break
-        
-        if not is_duplicate:
-            final_articles.append(article)
-            seen_titles.append(article['title'])
-
-    # Limit to max articles after all deduplication
-    state["deduped_articles"] = final_articles[:config.max_articles]
-    
-    stats = state.setdefault("processing_stats", {})
-    stats["articles_after_url_dedup"] = len(url_deduped_articles)
-    stats["articles_after_title_dedup"] = len(state["deduped_articles"])
-    stats["duplicates_removed"] = len(state["new_articles"]) - len(state["deduped_articles"])
-    
-    logger.info(f"After all deduplication: {len(state['deduped_articles'])} new articles remain.")
-    return state
-
-def summarize_trends(state: AgentState) -> AgentState:
-    """Generate executive summary of quantum news trends."""
-    logger.info("Generating executive summary...")
-    if not state["deduped_articles"]:
-        state["executive_summary"] = "No significant new developments in quantum networking this period."
-        return state
-    
-    articles_info = []
-    for article in state["deduped_articles"]:
-        info = f"Title: {article['title']}\nURL: {article['url']}"
-        if article.get('snippet'):
-            info += f"\nSnippet: {article['snippet']}"
-        articles_info.append(info)
-    
-    content = "\n\n".join(articles_info)
-    prompt = f"""
-    Analyze the following quantum networking and quantum key distribution (QKD) news articles 
-    and write a compelling 150-word executive summary that:
-    1. Identifies key trends in both quantum networks and QKD from the past two months
-    2. Highlights the most significant breakthroughs in quantum networking and QKD
-    3. Explains implications for the quantum industry
-    4. Keep it concise and under 150 words
-    5. Use engaging, professional language suitable for investors and technologists
-    
-    Articles:
-    {content}
-    """
-    try:
-        response = llm.invoke([HumanMessage(content=prompt)])
-        state["executive_summary"] = response.content
-    except Exception as e:
-        logger.error(f"Failed to generate summary: {e}")
-        state["executive_summary"] = "Unable to generate executive summary due to processing error."
-        state.setdefault("errors", []).append(f"Summary generation failed: {e}")
-    
-    return state
-
-def gather_investment_updates(state: AgentState) -> AgentState:
-    """Gather updates on tracked quantum companies."""
-    logger.info("Gathering investment updates...")
-    updates = {}
-    for company in config.companies_to_track:
-        company = company.strip()
-        try:
-            update = get_dynamic_company_update.invoke(company)
-            updates[company] = update
-        except Exception as e:
-            logger.error(f"Failed to get update for {company}: {e}")
-            updates[company] = f"Update unavailable for {company}"
-    
-    state["investment_updates"] = updates
-    state.setdefault("processing_stats", {})["companies_tracked"] = len(updates)
-    return state
-
-def compose_newsletter(state: AgentState) -> AgentState:
-    """Compose the final newsletter content."""
-    logger.info("Composing newsletter...")
-    
-    today = datetime.date.today()
-    
-    # Articles section (underscores for italics removed from snippet)
-    if state["deduped_articles"]:
-        articles_md = "\n".join([
-            f"{i+1}. [{article['title']}]({article['url']})"
-            + (f"\n    {article['snippet']}" if article.get('snippet') else "")
-            for i, article in enumerate(state["deduped_articles"])
-        ])
-    else:
-        articles_md = "_No new articles this period._"
-    
-    # Investment updates section
-    investment_md = "\n\n".join([
-        f"{company}: {update}" 
-        for company, update in state["investment_updates"].items()
-    ])
-    
-    # Processing stats
-    stats = state.get("processing_stats", {})
-    stats_md = f"""
-Processing Statistics:
-- Articles found: {stats.get('articles_found', 0)}
-- New articles (after deduplication): {stats.get('articles_after_title_dedup', 0)}
-- Companies tracked: {stats.get('companies_tracked', 0)}
-"""
-    
-    newsletter_content = f"""# Quantum Intelligence Newsletter
-*Generated on {today.strftime('%B %d, %Y')}*
-
-## 🧠 Executive Summary
-{state['executive_summary']}
-
-## 📈 Investment & Company Updates
-{investment_md}
-
-## 📚 Latest Articles & Developments
-{articles_md}
-
-## 📊 Newsletter Statistics
-{stats_md}
-
----
-*This newsletter was automatically generated by the Quantum Intelligence Agent*
-"""
-    
-    state["messages"] = [HumanMessage(content=newsletter_content)]
-    return state
-
-def send_email_and_save(state: AgentState) -> AgentState:
-    """Send newsletter via email and save to file."""
-    logger.info("Sending email and saving newsletter...")
-    today = datetime.date.today()
-    subject = f"🚀 Quantum Intelligence Newsletter – {today.strftime('%B %Y')}"
-    content = state["messages"][-1].content
-    email_sent = send_newsletter_email(subject, content)
-    
-    try:
-        output_path = Path(config.output_file)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        logger.info(f"Newsletter saved to {output_path}")
-    except Exception as e:
-        logger.error(f"Failed to save newsletter: {e}")
-        state.setdefault("errors", []).append(f"File save failed: {e}")
-    
-    save_processing_stats(state.get("processing_stats", {}))
-    state.setdefault("processing_stats", {})["email_sent"] = email_sent
-    return state
-
-def update_persistence(state: AgentState) -> AgentState:
-    """Update the persistence file with new article URLs."""
-    logger.info("Updating persistence...")
-    new_urls = [article['url'] for article in state["deduped_articles"]]
-    
-    if new_urls:
-        try:
-            with open(config.previous_articles_file, "a") as f:
-                for url in new_urls:
-                    f.write(f"{url}\n")
-            logger.info(f"Saved {len(new_urls)} URLs to persistence file")
-        except Exception as e:
-            logger.error(f"Failed to update persistence: {e}")
-            state.setdefault("errors", []).append(f"Persistence update failed: {e}")
-    
-    return state
-
-# ------------------------------
-# Graph Definition
-# ------------------------------
-def create_newsletter_graph():
-    """Create and return the compiled newsletter generation graph."""
-    builder = StateGraph(AgentState)
-    builder.add_node("search", retrieve_articles)
-    builder.add_node("deduplicate", deduplicate_articles)
-    builder.add_node("summarize", summarize_trends)
-    builder.add_node("investments", gather_investment_updates)
-    builder.add_node("compose", compose_newsletter)
-    builder.add_node("send_and_save", send_email_and_save)
-    builder.add_node("update_persistence", update_persistence)
-    
-    builder.set_entry_point("search")
-    builder.add_edge("search", "deduplicate")
-    builder.add_edge("deduplicate", "summarize")
-    builder.add_edge("summarize", "investments")
-    builder.add_edge("investments", "compose")
-    builder.add_edge("compose", "send_and_save")
-    builder.add_edge("send_and_save", "update_persistence")
-    builder.add_edge("update_persistence", END)
-    
-    return builder.compile()
-
-# ------------------------------
-# Main Execution
-# ------------------------------
-def main():
-    """Main function to run the newsletter generation."""
-    logger.info("Starting Quantum Newsletter Generation...")
-    initial_state = {
-        "messages": [],
-        "new_articles": [],
-        "deduped_articles": [],
-        "investment_updates": {},
-        "executive_summary": "",
-        "errors": [],
-        "processing_stats": {}
-    }
-    
-    try:
-        graph = create_newsletter_graph()
-        result = graph.invoke(initial_state)
-        
-        logger.info("Newsletter generation completed successfully!")
-        
-        # print(result["messages"][-1].content)
-        
-        if result.get("errors"):
-            print("\n" + "="*60)
-            print("ERRORS ENCOUNTERED")
-            print("="*60)
-            for error in result["errors"]:
-                print(f"- {error}")
-        
-        stats = result.get("processing_stats", {})
-        print("\n" + "="*60)
-        print("FINAL NEWSLETTER & STATISTICS")
-        print("="*60)
-        print(result["messages"][-1].content)
-        print("\n" + "="*60)
-        for key, value in stats.items():
-            print(f"- {key.replace('_', ' ').title()}: {value}")
-            
-    except Exception as e:
-        logger.error(f"Newsletter generation failed: {e}")
-        raise
-
-if __name__ == "__main__":
-    main()
+                logger.info(f"Found title duplicate (similarity...")
