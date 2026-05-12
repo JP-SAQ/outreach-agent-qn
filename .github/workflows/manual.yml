@@ -11,4 +11,4 @@ jobs:
         with:
           aqg_instance: https://aispm-demo.aqtiveguard.com
           aqg_client_id: ${{ secrets.aq-f98c0c25ad82bd10209c1c2e4604af225e08e03d}}
-          aqg_client_secret: ${{ secrets.3698f66e6010c0f678a7e8e786bc45eba715cc776b953350e14485baa2caac41 }}
+          aqg_client_secret: ${{ secrets.f4b2a3eefd043c5d159c7f35bdfae8fe7fffdd4ad43c8b31dcebfde1c958595e}}
