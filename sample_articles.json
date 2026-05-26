@@ -1,0 +1,124 @@
+{
+  "valid_articles": [
+    {
+      "title": "Breakthrough in Quantum Key Distribution Technology",
+      "url": "https://example.com/qkd-breakthrough-2026",
+      "snippet": "Recent advances in QKD technology have led to the development of practical and scalable systems for secure data transmission."
+    },
+    {
+      "title": "Large-Scale Quantum Communication Networks with Integrated Photonics",
+      "url": "https://nature.com/articles/quantum-networks-photonics",
+      "snippet": "Proof-of-principle demonstration of an integrated-photonics TF-QKD network with exceptional scalability and reliability."
+    },
+    {
+      "title": "UK Achieves Quantum Communications Breakthrough",
+      "url": "https://innovationnews.com/uk-quantum-breakthrough",
+      "snippet": "Integration of two advanced quantum key distribution techniques enabling secure communications at scale."
+    }
+  ],
+  "duplicate_titles": [
+    {
+      "title": "Quantum Computing Advances in 2026",
+      "url": "https://site1.com/quantum-computing-2026",
+      "snippet": "Major breakthroughs in quantum computing this year."
+    },
+    {
+      "title": "Quantum Computing Advances 2026",
+      "url": "https://site2.com/quantum-advances",
+      "snippet": "Significant progress in quantum computing technology."
+    },
+    {
+      "title": "Quantum Computing Advances in Twenty Twenty-Six",
+      "url": "https://site3.com/qc-advances-2026",
+      "snippet": "The year 2026 saw remarkable quantum computing achievements."
+    }
+  ],
+  "invalid_urls": [
+    {
+      "title": "Article with Tag Page URL",
+      "url": "https://example.com/tag/quantum-computing",
+      "snippet": "This should be filtered out."
+    },
+    {
+      "title": "Article with Category Page URL",
+      "url": "https://example.com/category/research",
+      "snippet": "This should be filtered out."
+    },
+    {
+      "title": "Article with Search Page URL",
+      "url": "https://example.com/search?q=quantum",
+      "snippet": "This should be filtered out."
+    }
+  ],
+  "previous_urls": [
+    "https://example.com/old-article-1",
+    "https://example.com/old-article-2",
+    "https://example.com/old-article-3",
+    "https://nature.com/articles/previous-quantum-paper",
+    "https://arxiv.org/abs/2024.12345"
+  ],
+  "company_news": [
+    {
+      "company": "EvolutionQ",
+      "title": "EvolutionQ Secures Series B Funding",
+      "url": "https://example.com/evolutionq-funding",
+      "snippet": "EvolutionQ announces $30M Series B to expand quantum-safe cryptography solutions."
+    },
+    {
+      "company": "Qunnect",
+      "title": "Qunnect Launches ABQ-Net Quantum Network",
+      "url": "https://example.com/qunnect-abq-net",
+      "snippet": "Qunnect secured $10M Series A extension and launched New Mexico's first quantum network."
+    }
+  ],
+  "test_scenarios": {
+    "high_similarity_pair": [
+      {
+        "title": "Quantum Networks in 2026",
+        "url": "https://site1.com/networks"
+      },
+      {
+        "title": "Quantum Networks 2026",
+        "url": "https://site2.com/networks"
+      }
+    ],
+    "low_similarity_pair": [
+      {
+        "title": "Quantum Key Distribution Advances",
+        "url": "https://site1.com/qkd"
+      },
+      {
+        "title": "Artificial Intelligence Breakthroughs",
+        "url": "https://site2.com/ai"
+      }
+    ],
+    "mixed_case_titles": [
+      {
+        "title": "QUANTUM COMPUTING BREAKTHROUGH",
+        "url": "https://site1.com/caps"
+      },
+      {
+        "title": "quantum computing breakthrough",
+        "url": "https://site2.com/lower"
+      },
+      {
+        "title": "Quantum Computing Breakthrough",
+        "url": "https://site3.com/title"
+      }
+    ]
+  },
+  "edge_cases": {
+    "very_long_title": {
+      "title": "A Comprehensive Study of Quantum Key Distribution Networks with Integrated Photonics for Secure Communications Across Continental Distances Using Advanced Entanglement Distribution Techniques",
+      "url": "https://example.com/very-long-title"
+    },
+    "special_characters": {
+      "title": "Quantum Computing: The Future [2026] – AI & ML Integration!",
+      "url": "https://example.com/special-chars"
+    },
+    "unicode_characters": {
+      "title": "量子計算機 Quantum Computing 2026",
+      "url": "https://example.com/unicode"
+    }
+  }
+}
