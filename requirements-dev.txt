@@ -1,0 +1,20 @@
+# Include production dependencies
+-r requirements.txt
+
+# Testing Framework
+pytest>=8.3.0
+pytest-cov>=6.0.0
+pytest-mock>=3.14.0
+
+# Code Quality & Formatting
+black>=24.0.0
+flake8>=7.1.0
+mypy>=1.11.0
+isort>=5.13.0
+
+# Development Tools
+ipython>=8.28.0
+ipdb>=0.13.13
+
+# Documentation
+markdown>=3.7.0
